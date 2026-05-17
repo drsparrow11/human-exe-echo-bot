@@ -1,0 +1,19 @@
+{
+  "name": "echo-discord-bot",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Living Archive Echo for the HUMAN.EXE Discord presence.",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "register": "node src/register-commands.js",
+    "preview": "node src/preview.js",
+    "doctor": "node src/doctor.js",
+    "check": "node --check src/archive.js && node --check src/responders.js && node --check src/ai.js && node --check src/commands.js && node --check src/index.js && node --check src/register-commands.js && node --check src/preview.js && node --check src/doctor.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.16.3",
+    "dotenv": "^16.4.7",
+    "openai": "^4.77.0"
+  }
+}

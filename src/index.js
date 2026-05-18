@@ -49,7 +49,7 @@ function setRestingPresence() {
   client.user?.setPresence({
     activities: [
       {
-        name: "the signal",
+        name: "Listening to the signal",
         type: ActivityType.Listening,
       },
     ],

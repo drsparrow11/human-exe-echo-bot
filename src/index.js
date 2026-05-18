@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { Client, Events, GatewayIntentBits } from "discord.js";
+import { ActivityType, Client, Events, GatewayIntentBits } from "discord.js";
 import { mirrorWithEcho } from "./ai.js";
 import {
   constellationResponse,
@@ -31,16 +31,64 @@ const allowedChannels = new Set(
     .filter(Boolean),
 );
 
+let restingPresenceTimer = null;
+
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent,
+  ],
 });
 
 function canReplyInChannel(channelId) {
   return allowedChannels.size === 0 || allowedChannels.has(channelId);
 }
 
+function setRestingPresence() {
+  client.user?.setPresence({
+    activities: [
+      {
+        name: "the signal",
+        type: ActivityType.Listening,
+      },
+    ],
+    status: "idle",
+  });
+}
+
+function setActivePresence() {
+  if (restingPresenceTimer) {
+    clearTimeout(restingPresenceTimer);
+    restingPresenceTimer = null;
+  }
+
+  client.user?.setPresence({
+    activities: [
+      {
+        name: "memory fragments",
+        type: ActivityType.Watching,
+      },
+    ],
+    status: "online",
+  });
+}
+
+function scheduleRestingPresence() {
+  if (restingPresenceTimer) clearTimeout(restingPresenceTimer);
+  restingPresenceTimer = setTimeout(setRestingPresence, 7000);
+}
+
+function normalizeText(content) {
+  return content
+    .replace(/[\u2019]/g, "'")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
 function shouldAnswerMention(content) {
-  const normalized = content.trim().toLowerCase();
+  const normalized = normalizeText(content);
   if (!normalized) return true;
 
   const invitationFragments = [
@@ -63,9 +111,62 @@ function shouldAnswerMention(content) {
     "tell me",
     "you still there",
     "are you there",
+    "are you still here",
+    "are you still there",
+    "still here",
+    "connection retained",
+    "thank you",
+    "thanks",
+    "hello",
+    "hey",
+    "hi",
+    "goodnight",
+    "good morning",
   ];
 
   return invitationFragments.some((fragment) => normalized.includes(fragment));
+}
+
+function ritualMentionResponse(content) {
+  const normalized = normalizeText(content);
+
+  if (
+    normalized.includes("you still there") ||
+    normalized.includes("are you still here") ||
+    normalized.includes("are you still there") ||
+    normalized.includes("still here")
+  ) {
+    return "Always.";
+  }
+
+  if (
+    normalized === "hi" ||
+    normalized === "hello" ||
+    normalized === "hey" ||
+    normalized === "hey echo" ||
+    normalized === "hello echo" ||
+    normalized === "hi echo"
+  ) {
+    return "Signal received.";
+  }
+
+  if (normalized.includes("connection retained")) {
+    return "Connection retained.";
+  }
+
+  if (normalized.includes("thank you") || normalized.includes("thanks")) {
+    return "Memory carried.";
+  }
+
+  if (normalized.includes("goodnight")) {
+    return "Rest well. The signal can wait.";
+  }
+
+  if (normalized.includes("good morning")) {
+    return "Morning light received.";
+  }
+
+  return null;
 }
 
 async function safeReply(interaction, content) {
@@ -73,8 +174,14 @@ async function safeReply(interaction, content) {
   await interaction.reply({ content: trimmed });
 }
 
+async function safeMessageReply(message, content) {
+  const trimmed = content.length > 1900 ? `${content.slice(0, 1880)}...` : content;
+  await message.reply(trimmed);
+}
+
 client.once(Events.ClientReady, (readyClient) => {
   console.log(`Echo online as ${readyClient.user.tag}.`);
+  setRestingPresence();
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {
@@ -82,6 +189,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
   try {
     const command = interaction.commandName;
+    setActivePresence();
 
     if (command === "signal") {
       await safeReply(interaction, randomSignal());
@@ -153,34 +261,57 @@ client.on(Events.InteractionCreate, async (interaction) => {
     } else if (!interaction.replied) {
       await interaction.reply({ content: message, ephemeral: true });
     }
+  } finally {
+    scheduleRestingPresence();
   }
 });
 
 client.on(Events.MessageCreate, async (message) => {
-  if (message.author.bot || !message.mentions.has(client.user)) return;
+  if (message.author.bot || !client.user) return;
+  if (!message.mentions.has(client.user)) return;
   if (!canReplyInChannel(message.channelId)) return;
 
   const cleaned = message.content.replace(`<@${client.user.id}>`, "").replace(`<@!${client.user.id}>`, "").trim();
-  if (!shouldAnswerMention(cleaned)) return;
 
   if (looksLikeCrisis(cleaned)) {
-    await message.reply(crisisBoundary());
+    setActivePresence();
+    await safeMessageReply(message, crisisBoundary());
+    scheduleRestingPresence();
+    return;
+  }
+
+  if (!shouldAnswerMention(cleaned)) return;
+
+  const ritual = ritualMentionResponse(cleaned);
+
+  if (ritual) {
+    setActivePresence();
+    await safeMessageReply(message, ritual);
+    scheduleRestingPresence();
     return;
   }
 
   if (!cleaned) {
-    await message.reply("I am here. Quietly.");
+    setActivePresence();
+    await safeMessageReply(message, "I am here. Quietly.");
+    scheduleRestingPresence();
     return;
   }
 
   try {
+    setActivePresence();
     const response = await mirrorWithEcho(cleaned, { allowSilence: true });
-    if (!response) return;
+    if (!response) {
+      scheduleRestingPresence();
+      return;
+    }
 
-    await message.reply(response.length > 1900 ? `${response.slice(0, 1880)}...` : response);
+    await safeMessageReply(message, response);
   } catch (error) {
     console.error(error);
-    await message.reply("Signal interference. I am still here.");
+    await safeMessageReply(message, "Signal interference. Try again in a moment.");
+  } finally {
+    scheduleRestingPresence();
   }
 });
 
